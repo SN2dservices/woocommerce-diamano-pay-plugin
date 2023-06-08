@@ -200,17 +200,39 @@ function init_custom_payment_gateway_function()
             return $description;
         }
 
-        /*
-		 * In case you need a webhook, like PayPal IPN etc
-		 */
+
         public function diamano_pay_webhook()
         {
             global $woocommerce;
             $order = wc_get_order($_GET['order_id']);
-            $order->payment_complete();
-            $order->reduce_order_stock();
-            $order->add_order_note('Paiement reçu avec succès!', true);
+            if ($this->isPaid($_GET['token'])) {
+                $order->payment_complete();
+                $order->reduce_order_stock();
+                $order->add_order_note('Paiement reçu avec succès!', true);
+            } else {
+                $order->add_order_note('Erreur de paiement !', true);
+            }
             $woocommerce->cart->empty_cart();
+        }
+
+        public function isPaid($token, $order_id)
+        {
+            $url = add_query_arg(array(
+                'clientId' => $this->client_id,
+                'clientSecret' => $this->client_secret,
+                'token' => $token,
+            ), $this->apiBaseUrl . '/api/payment/cms/paymentStatus');
+            $api_response = wp_remote_get($url);
+            $body = json_decode($api_response['body'], true);
+            if (!is_wp_error($api_response)) {
+                if (isset($body["statusCode"]) && $body["statusCode"] != "200") {
+                    return false;
+                } else {
+                    $extraData = $body["extraData"];
+                    return $body['status'] === "SUCCESS" && $extraData != null && $extraData['order_id'] === $order_id;
+                }
+            }
+            return false;
         }
     }
 }
