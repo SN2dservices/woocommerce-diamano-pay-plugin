@@ -1,11 +1,11 @@
 <?php
 /*
  * Plugin Name: WooCommerce Diamano pay Plugin
- * Plugin URI: https://www.2dservices.sn
+ * Plugin URI: https://www.diamanopay.com
  * Description: Accepte les paiments par Orange Money, Wave et carte bancaire au Sénégal.
- * Author: 2dServices
- * Author URI: http://www.2dservices.sn
- * Version: 1.0.0
+ * Author: Diamanopay
+ * Author URI: https://www.diamanopay.com
+ * Version: 1.0.1
  */
 
 /*

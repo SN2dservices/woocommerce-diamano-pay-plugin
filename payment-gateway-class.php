@@ -20,16 +20,15 @@ class WC_Diamano_Pay_Gateway extends WC_Payment_Gateway
         $this->title = $this->get_option('title');
         $this->description = $this->get_option('description');
         $this->enabled = $this->get_option('enabled');
-        $this->testmode = 'yes' === $this->get_option('testmode');
-        $this->apiBaseUrl = $this->testmode ? 'https://sandbox-api.diamanopay.com' : 'https://api.diamanopay.com';
-        $this->client_id = $this->testmode ? $this->get_option('test_client_id') : $this->get_option('client_id');
-        $this->client_secret = $this->testmode ? $this->get_option('test_client_secret') : $this->get_option('client_secret');
+        $this->testmode = 'yes' == $this->get_option('testmode');
+        $this->apiBaseUrl = 'https://api.diamanopay.com';
+        $this->accessToken = $this->testmode ? $this->get_option('sandbox_access_token') : $this->get_option('access_token');
         $this->payment_services = $this->get_option('payment_services');
         // This action hook saves the settings
         add_action('woocommerce_update_options_payment_gateways_' . $this->id, array($this, 'process_admin_options'));
 
         // You can also register a webhook here
-        add_action('woocommerce_api_diamano_pay', array($this, 'diamano_pay_webhook'));
+        add_action('woocommerce_api_' . $this->id, array($this, 'diamano_pay_webhook'));
     }
 
     /**
@@ -75,20 +74,12 @@ class WC_Diamano_Pay_Gateway extends WC_Payment_Gateway
                 'default'     => array('WAVE', 'ORANGE_MONEY'),
                 'desc_tip'    => true,
             ),
-            'test_client_id' => array(
-                'title'       => "ClientId pour l'environnement sandbox",
+            'sandbox_access_token' => array(
+                'title'       => "Access Token pour l'environnement sandbox",
                 'type'        => 'password'
             ),
-            'test_client_secret' => array(
-                'title'       => "ClientSecret pour l'environnement sandbox",
-                'type'        => 'password',
-            ),
-            'client_id' => array(
-                'title'       => "ClientId pour l'environnement de production",
-                'type'        => 'password'
-            ),
-            'client_secret' => array(
-                'title'       => "ClientSecret pour l'environnement de production",
+            'access_token' => array(
+                'title'       => "Access Token pour l'environnement de production",
                 'type'        => 'password'
             )
         );
@@ -101,12 +92,14 @@ class WC_Diamano_Pay_Gateway extends WC_Payment_Gateway
 
         $order = wc_get_order($order_id);
         $data = $order->data;
-        $webhook = str_replace('https:', 'http:', add_query_arg(array('wc-api' => 'diamano_pay', 'order_id' => $order_id), home_url('/')));
+        //$webhook = str_replace('https:', 'http:', add_query_arg(array('wc-api' => 'diamano_pay', 'order_id' => $order_id), home_url('/')));
+        $webhook = add_query_arg(array('wc-api' => 'diamano_pay', 'order_id' => $order_id), home_url('/'));
         $checkout_url = wc_get_page_permalink('checkout');
         $args = array(
             'method' => 'POST',
             'headers'  => array(
-                'Content-type' => 'application/json'
+                'Content-type' => 'application/json',
+                'Authorization' => 'Bearer ' . $this->accessToken,
             ),
             'body' => wp_json_encode(array(
                 'amount' => (float)$data["total"],
@@ -118,10 +111,7 @@ class WC_Diamano_Pay_Gateway extends WC_Payment_Gateway
                 'extraData' => array('order_id' => $order_id)
             ))
         );
-        $url = add_query_arg(array(
-            'clientId' => $this->client_id,
-            'clientSecret' => $this->client_secret,
-        ), $this->apiBaseUrl . '/api/payment/cms/paymentToken');
+        $url = $this->apiBaseUrl . '/api/payment/paymentToken';
         $api_response = wp_remote_post($url, $args);
         $body = json_decode($api_response['body'], true);
         if (!is_wp_error($api_response)) {
@@ -130,6 +120,8 @@ class WC_Diamano_Pay_Gateway extends WC_Payment_Gateway
                 wc_add_notice($messages[0], 'error');
                 return;
             } else {
+                // $order->update_meta_data('diamano_pay_token', );
+                // $order->save();
                 return array(
                     'result' => 'success',
                     'redirect' => $body["paymentUrl"]
@@ -158,31 +150,43 @@ class WC_Diamano_Pay_Gateway extends WC_Payment_Gateway
     {
         global $woocommerce;
         $order = wc_get_order($_GET['order_id']);
-        if ($this->isPaid($_GET['token'])) {
-            $order->payment_complete();
-            $order->reduce_order_stock();
-            $order->add_order_note('Paiement reçu avec succès!', true);
+        // Récupérer le contenu du corps de la requête
+        $request_body = file_get_contents('php://input');
+        // Convertir les données JSON en tableau associatif
+        $request_data = json_decode($request_body, true);
+        if (isset($request_data['paymentRequestId'])) {
+            $payment_request_id = $request_data['paymentRequestId'];
+            if ($this->isPaid($_GET['order_id'], $payment_request_id)) {
+                $order->payment_complete();
+                $order->reduce_order_stock();
+                $order->add_order_note('Paiement reçu avec succès!', true);
+            } else {
+                $order->add_order_note('Erreur de paiement est survenue !', true);
+            }
         } else {
-            $order->add_order_note('Erreur de paiement !', true);
+            $order->add_order_note('Erreur, aucun statut sur le paiement', true);
         }
         $woocommerce->cart->empty_cart();
     }
 
-    public function isPaid($token, $order_id)
+    public function isPaid($order_id, $payment_request_id)
     {
-        $url = add_query_arg(array(
-            'clientId' => $this->client_id,
-            'clientSecret' => $this->client_secret,
-            'token' => $token,
-        ), $this->apiBaseUrl . '/api/payment/cms/paymentStatus');
-        $api_response = wp_remote_get($url);
+        $args = array(
+            'method' => 'GET',
+            'headers'  => array(
+                'Content-type' => 'application/json',
+                'Authorization' => 'Bearer ' . $this->accessToken,
+            )
+        );
+        $url = $this->apiBaseUrl . '/api/payment/paymentStatus?paymentReference=' . $payment_request_id;
+        $api_response = wp_remote_get($url, $args);
         $body = json_decode($api_response['body'], true);
         if (!is_wp_error($api_response)) {
             if (isset($body["statusCode"]) && $body["statusCode"] != "200") {
                 return false;
             } else {
                 $extraData = $body["extraData"];
-                return $body['status'] === "SUCCESS" && $extraData != null && $extraData['order_id'] === $order_id;
+                return $body['status'] === "COMPLETED" && $extraData != null && $extraData['order_id'] == $order_id;
             }
         }
         return false;
