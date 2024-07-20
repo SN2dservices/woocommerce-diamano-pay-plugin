@@ -21,7 +21,6 @@ final class Diamano_Pay_Gateway_Blocks extends AbstractPaymentMethodType
 
     public function get_payment_method_script_handles()
     {
-
         wp_register_script(
             'diamano_pay-blocks-integration',
             plugin_dir_url(__FILE__) . 'checkout.js',
@@ -45,8 +44,8 @@ final class Diamano_Pay_Gateway_Blocks extends AbstractPaymentMethodType
     {
         return [
             'title' => $this->gateway->title,
-            'asset_url' => plugin_dir_url(__FILE__) . '/assets',
-            //'description' => $this->gateway->description,
+            'asset_url' => plugin_dir_url(__FILE__) . 'assets',
         ];
     }
 }
+?>
