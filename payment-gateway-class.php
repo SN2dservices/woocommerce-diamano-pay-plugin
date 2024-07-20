@@ -75,34 +75,58 @@ class WC_Diamano_Pay_Gateway extends WC_Payment_Gateway
         $order = wc_get_order($order_id);
         $webhook = add_query_arg(array('wc-api' => 'diamano_pay', 'order_id' => $order_id), home_url('/'));
         $checkout_url = wc_get_page_permalink('checkout');
-        $args = array(
-            'method' => 'POST',
-            'headers' => array(
-                'Content-type' => 'application/json',
-                'Authorization' => 'Bearer ' . $this->accessToken,
-            ),
-            'body' => wp_json_encode(array(
-                'amount' => (float) $order->get_total(),
-                'webhook' => $webhook,
-                'callbackSuccessUrl' => $this->get_return_url($order),
-                'callbackCancelUrl' => $checkout_url,
-                'paymentMethods' => $this->payment_services,
-                'description' => $this->getDescription($order),
-                'extraData' => array('order_id' => $order_id),
-            )),
-        );
         $url = $this->apiBaseUrl . '/api/payment/paymentToken';
-        $response = wp_remote_post($url, $args);
 
-        if (is_wp_error($response)) {
+        // Préparer les en-têtes et le corps de la requête
+        $headers = array(
+            'Content-Type: application/json',
+            'Authorization: Bearer ' . $this->accessToken,
+        );
+
+        $body = json_encode(array(
+            'amount' => (float) $order->get_total(),
+            'webhook' => $webhook,
+            'callbackSuccessUrl' => $this->get_return_url($order),
+            'callbackCancelUrl' => $checkout_url,
+            'paymentMethods' => $this->payment_services,
+            'description' => $this->getDescription($order),
+            'extraData' => array('order_id' => $order_id),
+        ));
+
+        // Initialisation de la requête cURL
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+
+        // Exécution de la requête et récupération de la réponse
+        $response = curl_exec($ch);
+
+        // Vérification des erreurs cURL
+        if (curl_errno($ch)) {
             wc_add_notice('Une erreur est survenue. Merci de vérifier les informations de connexion à Diamano Pay.', 'error');
+            curl_close($ch);
             return;
         }
 
-        $body = json_decode($response['body'], true);
+        // Fermeture de la session cURL
+        curl_close($ch);
 
+        // Décodage de la réponse JSON
+        $body = json_decode($response, true);
+
+        // Vérification du statut de la réponse
         if (isset($body['statusCode']) && $body['statusCode'] != '200') {
-            wc_add_notice($body['message'][0], 'error');
+            $message = "";
+            if ($body['statusCode'] == '503') {
+                $message = $body['message'];
+            } else {
+                $message = $body['message'][0];
+            }
+            wc_add_notice($message, 'error');
             return;
         }
 
@@ -142,7 +166,7 @@ class WC_Diamano_Pay_Gateway extends WC_Payment_Gateway
         $request_data = json_decode($request_body, true);
 
         if (isset($request_data['paymentRequestId'])) {
-            if ($this->isPaid($order_id, $request_data['paymentRequestId'])) {
+            if ($this->isPaid($order, $request_data['paymentRequestId'])) {
                 $order->payment_complete();
                 $order->reduce_order_stock();
                 $order->add_order_note('Paiement reçu avec succès!', true);
@@ -175,6 +199,7 @@ class WC_Diamano_Pay_Gateway extends WC_Payment_Gateway
         }
         return true;
     }
+
 
     public function is_available()
     {
